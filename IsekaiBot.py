@@ -11,11 +11,13 @@ except ModuleNotFoundError:
     import pickle
 import logging
 # generation
+from copy import copy, deepcopy
 import random as rnd
 from random import choices
 # system control
-from os.path import isfile
-from time import sleep
+import os
+from os.path import isfile, join
+import time as t
 from math import ceil, floor, exp
 import sys
 from sys import exit
@@ -28,6 +30,7 @@ rnd.seed()
 USERS_LIST = "users.json"
 SAVE_FILES = "cartridges"
 REPORT_FILE = "errorLog.txt"
+DUNGEON_PATH = "Dungeon"
 # command line
 PREFIXES = ["..",]
 USERNAME = 0
@@ -47,20 +50,17 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 bot = commands.Bot(command_prefix = PREFIXES) # bot instantiation line
 # stats
+# stats
 HP = 0
 ATK = 1
 DEF = 2
 SPATK = 3
 SPDEF = 4
 AGI = 5
+CRIT = 6
+LUCK = 7
 # same for every adventurer
-BASE_STATS = [40, 12, 10, 12, 10, 8]
-# 12 points distributed 
-DEV_STATS = {
-    "fighter": [4, 2, 2, 1, 1, 2], 
-    "magicaster": [4, 1, 1, 3, 2, 1],
-    "survivalist": [4, 2, 1, 1, 1, 3]
-}
+BASE_STATS = [40, 12, 10, 12, 10, 8, 1, 1]
 # isekai world
 MNST = 0
 FIGT = 1
@@ -90,25 +90,33 @@ class item:
         self.name = name
         self.iType = iType
         self.description = description
-        if self.iType == ALL_ITYPES[EQPT]: # if equipment
-            self.stats = stats # only equipment will have stats
-            self.req = req
+        # will be none for anything but gear
+        self.stats = copy(stats)
+        self.req = copy(req)
     def descr(self):
         '''Return a string that describes the object.'''
-        descr = "[{}]: {}\n".format(self.name, self.description)
+        descr = "[{}]`{}`\n{}\n".format(self.iType, self.name, self.description)
         if self.iType == ALL_ITYPES[EQPT]:
-            descr += "HP: {:3d}|ATK: {:3d}|DEF: {:3d}|".format(self.stats[HP],
+            descr += "Requirements: `{}`\n".format(self.req)
+            descr += "HP: `{:3d}`|ATK: `{:3d}`|DEF: `{:3d}`|".format(self.stats[HP],
                 self.stats[ATK], self.stats[DEF])
-            descr += "SPATK: {:3d}|SPDEF: {:3d}|AGI: {:3d}|".format(self.stats[SPATK],
+            descr += "SPATK: `{:3d}`|SPDEF: `{:3d}`|AGI: `{:3d}`|".format(self.stats[SPATK],
                 self.stats[SPDEF], self.stats[AGI])
+            descr += "CRIT: `{:3d}`|LUCK: `{:3d}`|".format(self.stats[CRIT], self.stats[LUCK])
         return descr
     # getters
     def getName(self):
         return self.name
     def getRequirements(self):
-        return self.req
+        if self.iType == ALL_ITYPES[EQPT]:
+            return self.req
+        else:
+            return None
     def getStats(self):
-        return self.stats
+        if self.iType == ALL_ITYPES[EQPT]:
+            return self.stats
+        else:
+            return None
 
 # class for inventory
 class bag:
@@ -187,6 +195,10 @@ class bag:
                 del self.contents[pos]
                 del self.qties[pos]
         return takenOut
+    def availableInBag(self):
+        '''Returns a sample the contents of the bag as a list of "item" objects.
+        Will be used to loot monsters.'''
+        return self.contents
 
 # class for wallet
 class wallet:
@@ -197,7 +209,7 @@ class wallet:
         return self.contents
     def reveal(self):
         '''Return a string that tells how much there is inside.'''
-        return "{} isekash".format(self.contents)
+        return "`{} i$`".format(self.contents)
     def cashIn(self, amount):
         '''Adds the amount to your pouch.'''
         self.contents += amount
@@ -210,7 +222,6 @@ class wallet:
             out = amount
         return out
 
-# class for adventurers and monsters
 class isekaiMob:
     '''Class of any mob of the isekai universe.
     The "iClass" attribute will distinguish them.
@@ -226,7 +237,9 @@ class isekaiMob:
             "DEF": {"cur": stats[DEF], "max": stats[DEF]},
             "SPATK": {"cur": stats[SPATK], "max": stats[SPATK]},
             "SPDEF": {"cur": stats[SPDEF], "max": stats[SPDEF]},
-            "AGI": {"cur": stats[AGI], "max": stats[AGI]}
+            "AGI": {"cur": stats[AGI], "max": stats[AGI]},
+            "CRIT": {"cur": stats[CRIT], "max": stats[CRIT]},
+            "LUCK": {"cur": stats[LUCK], "max": stats[LUCK]}
         }
         self.bag = bag()
         if iClass != ALL_CLASSES[MNST]: # if not a monster
@@ -251,6 +264,8 @@ class isekaiMob:
         return self.level
     def getStats(self): # return list of current stats
         return [self.stats[stat]["cur"] for stat in self.stats]
+    def getDictStats(self): # return the dict of all the stats
+        return self.stats
     def isAlive(self):
         return self.stats["HP"]["cur"] > 0
     def getBag(self):
@@ -270,12 +285,19 @@ class isekaiMob:
         '''Open and reveal the contents of their wallet.'''
         return self.wallet.reveal()
     # setters
+    def heal(self, hpAmount):
+        '''Heals HP by "hpAmount".'''
+        self.stats["HP"]["cur"] += hpAmount
+        if self.stats["HP"]["cur"] > self.stats["HP"]["max"]:
+            self.stats["HP"]["cur"] = self.stats["HP"]["max"]
     def addStats(self, addedStats):
-        for i, stat in self.stats:
-            self.stats[stat]["cur"] += addedStats[i]
+        '''Increase "self.stats" by a list of stats.'''
+        for i, stat in enumerate(self.stats):
+            if stat != "HP": # current HP won't change on the fly
+                self.stats[stat]["cur"] += addedStats[i]
             self.stats[stat]["max"] += addedStats[i]
     def subStats(self, subsedStats):
-        for i, stat in self.stats:
+        for i, stat in enumerate(self.stats):
             self.stats[stat]["cur"] -= subsedStats[i]
             self.stats[stat]["max"] -= subsedStats[i]
     def sufferDamage(self, amount):
@@ -335,7 +357,7 @@ class isekaiMob:
     def profile(self):
         '''Returns a string that describe the mob.'''
         descr = str()
-        descr += "[{}]{} Lv. {:3d}| HP: {:3d}/{:3d}\n".format(self.name, self.iClass, self.level,
+        descr += "`<{}>` `{}`   lv. `{:3d}`|   HP: `{:3d}/{:3d}`\n".format(self.iClass, self.name, self.level,
             self.stats["HP"]["cur"], self.stats["HP"]["max"])
         # head
         if self.equipment["head"] == None:
@@ -370,29 +392,123 @@ class isekaiMob:
         else:
             descr += "Accessory: `{}`\n".format(self.equipment["accessory"].getName())
         # stats
-        descr += "ATK: {:3d}|DEF: {:3d}|SPATK: {:3d}|SPDEF: {:3d}| AGI: {:3d}\n".format(
-            self.stats["ATK"]["cur"], self.stats["DEF"]["cur"], self.stats["SPATK"]["cur"],
-            self.stats["SPDEF"]["cur"], self.stats["AGI"]["cur"])
-        descr += "Exp.: {:3d}\n".format(self.exp)
+        descr += "ATK: `{:3d}`|DEF: `{:3d}`|SPATK: `{:3d}`|SPDEF: `{:3d}`| AGI: `{:3d}`| CRIT: `{:3d}`| LUCK: `{:3d}`\n".format(self.stats["ATK"]["cur"],
+            self.stats["DEF"]["cur"], self.stats["SPATK"]["cur"], self.stats["SPDEF"]["cur"],
+            self.stats["AGI"]["cur"], self.stats["CRIT"]["cur"], self.stats["LUCK"]["cur"])
+        descr += "Exp.: `{:3d}`\n".format(self.exp)
         return descr
     def develUp(self, expAmount):
         '''Receive exp and raise level if needed. Each time level is raised
         update base stats.'''
         levelUP = False
         self.exp += expAmount
+        print(self.exp)
         newLvl = self.exp // 100 + 1
         diffLvl = newLvl - self.level
         if diffLvl != 0:
             levelUP = True
             for lvl in range(diffLvl):
-                self.addStats(DEV_STATS)
+                # evolution depends on class for specific stats
+                evo = list()
+                # between 15% and 20% hp gain for anyone
+                evo.append(rnd.randint(ceil(self.stats["HP"]["max"] * .15), 
+                    ceil(self.stats["HP"]["max"] * .20)))
+                if self.iClass == ALL_CLASSES[FIGT]:
+                    # between 15% and 20% atk and def gain
+                    evo.append(rnd.randint(ceil(self.stats["ATK"]["max"] * .15), 
+                        ceil(self.stats["ATK"]["max"] * .20)))
+                    evo.append(rnd.randint(ceil(self.stats["DEF"]["max"] * .15), 
+                        ceil(self.stats["DEF"]["max"] * .20)))
+                    # between 3% and 6% spatk and spdef gain
+                    evo.append(rnd.randint(ceil(self.stats["SPATK"]["max"] * .03), 
+                        ceil(self.stats["SPATK"]["max"] * .06)))
+                    evo.append(rnd.randint(ceil(self.stats["SPDEF"]["max"] * .03), 
+                        ceil(self.stats["SPDEF"]["max"] * .06)))
+                    # between 10% and 12% agi gain
+                    evo.append(rnd.randint(ceil(self.stats["AGI"]["max"] * .1), 
+                        ceil(self.stats["AGI"]["max"] * .12))) 
+                if self.iClass == ALL_CLASSES[MAGC]:
+                    # between 3% and 6% atk and def gain
+                    evo.append(rnd.randint(ceil(self.stats["ATK"]["max"] * .03), 
+                        ceil(self.stats["ATK"]["max"] * .06)))
+                    evo.append(rnd.randint(ceil(self.stats["DEF"]["max"] * .03), 
+                        ceil(self.stats["DEF"]["max"] * .06)))
+                    # between 15% and 20% spatk and spdef gain
+                    evo.append(rnd.randint(ceil(self.stats["SPATK"]["max"] * .15), 
+                        ceil(self.stats["SPATK"]["max"] * .2)))
+                    evo.append(rnd.randint(ceil(self.stats["SPDEF"]["max"] * .15), 
+                        ceil(self.stats["SPDEF"]["max"] * .3)))
+                    # between 10% and 12% agi gain
+                    evo.append(rnd.randint(int(self.stats["AGI"]["max"] * .1), 
+                        int(self.stats["AGI"]["max"] * .12)))
+                if self.iClass == ALL_CLASSES[SRVL]:
+                    # between 15% and 20% atk gain
+                    evo.append(rnd.randint(ceil(self.stats["ATK"]["max"] * .15), 
+                        ceil(self.stats["ATK"]["max"] * .2)))
+                    # between 10% and 12% def gain
+                    evo.append(rnd.randint(ceil(self.stats["DEF"]["max"] * .1), 
+                        ceil(self.stats["DEF"]["max"] * .12)))
+                    # between 3% and 6% spatk gain
+                    evo.append(rnd.randint(ceil(self.stats["SPATK"]["max"] * .03), 
+                        ceil(self.stats["SPATK"]["max"] * .06)))
+                    # between 10% and 12% spdef gain
+                    evo.append(rnd.randint(ceil(self.stats["SPDEF"]["max"] * .1), 
+                        ceil(self.stats["SPDEF"]["max"] * .12)))
+                    # between 12% and 15% agi gain
+                    evo.append(rnd.randint(ceil(self.stats["AGI"]["max"] * .12), 
+                        ceil(self.stats["AGI"]["max"] * .15)))
+                # between 10% and 10% + cur. luck. crit and luck gain for anyone
+                evo.append(rnd.randint(ceil(self.stats["CRIT"]["max"] * .1),
+                    ceil(self.stats["CRIT"]["max"] * .1) + self.stats["LUCK"]["max"]))
+                evo.append(rnd.randint(ceil(self.stats["LUCK"]["max"] * .1),
+                    ceil(self.stats["LUCK"]["max"] * .1) + self.stats["LUCK"]["max"]))
+                # award the evolution points
+                self.addStats(evo)
         return levelUP
 
 ##### CONNECTIVITY EVENTS #####
 @bot.event
-async def on_error(context, error):
-    archive() # save data
-    eReport(str(error.__cause__))
+async def on_command_error(context, exception):
+    channel = context.message.channel
+    mention = context.message.author.mention
+    # check possible errors
+    if type(exception) == discord.ext.commands.errors.CommandNotFound:
+        await narrate(channel,
+            ["{}, that command doesn't exist :thinking::thinking::thinking:".\
+                format(mention),
+             "Use `..help` to see all available commands."]
+        )
+    elif type(exception) == discord.ext.commands.errors.MissingRequiredArgument:
+        command = context.command
+        if context.command.name == "equip" or context.command.name == "unequip":
+            await narrate(channel,
+                "{}, you forgot to mention the `\"gear name\"`".format(mention)
+            )
+        if context.command.name == "itemInfo":
+            await narrate(channel,
+                "{}, you forgot to mention the `\"item name\"`".format(mention)
+            )
+        if context.command.name == "explore":
+            await narrate(channel,
+                "{}, you forgot to mention the `\"floor number\"`".format(mention)
+            )
+        await narrate(channel,
+            "Type `..help {}` to find out more about the command.".format(command)
+        )
+    else: # unknown error
+        print(exception)
+        report = "Unknown Error\nIn message: "
+        report += context.message.content
+        report += '\n'
+        report += str(type(exception))
+        eReport(report)
+        await narrate(channel,
+            ["It seems there was a problem {}".format(mention),
+             "I'll let the devs know about that.",
+             "Why don't you do something else for now? :sweat_smile::sweat_smile::sweat_smile:",
+            ]
+        )
+        archive()
 
 # on connexion established
 @bot.event
@@ -405,21 +521,20 @@ async def userReply(message, username):
     if areSame(message.author.name, username):
         return message.content
     else:
-        return None
+        return "invalid" # that way it always returns a string
 
 # send responses
 async def narrate(channel, description):
     '''description can be either a string of a list of strings.'''
-    naration = str()
-    sleep(1.8)
     if type(description) == str:
         # print(description)
+        t.sleep(2.2)
         await channel.send(description)
     elif type(description == list): # for lists
+        t.sleep(2.2)
         for num, sentence in enumerate(description):
-            sleep(2) # waits 3 seconds before continuing
-            # print(sentence)
             await channel.send(sentence)
+            t.sleep(2.8)
     else:
         print("Nothing to say.")
 
@@ -431,13 +546,23 @@ async def register(context, accessLvl):
     user = isUser(tag)
     if user == None: # can only register non users
         currentList = None
+        newUser = {
+            "username":tag,
+            "access level":2,
+            "dungeon top":0,
+            "party": [],
+            "idle":"yes",
+            "resting": "no",
+			"exploring": "no"
+        }
         with open(USERS_LIST, 'r') as jsonData:
             try:
                 currentList = json.load(jsonData) # load current contents as a dict
             except json.JSONDecodeError: # the file is empty or unreadable
-                currentList = {"users": [{"username":tag, "level":2}]} # add this user then
+                # add this user then
+                currentList = {"users": [newUser,]}
             else: # if the exception wasn't raised
-                currentList["users"].append({"username":tag, "level":2}) # append new user
+                currentList["users"].append(newUser) # append new user
         with open(USERS_LIST, "w+") as jsonData: # reset the file before writing
             json.dump(currentList, jsonData, indent = 4) # save the new list
         return True
@@ -459,7 +584,6 @@ async def hello(context):
 # random omae wa mou shindeiru reaction
 @bot.command(name = "omae", help = "Responds <nani>")
 async def nani(context):
-    commandline = decode(context)
     channel = context.message.channel
     response = "> "
     response += context.message.content
@@ -471,8 +595,7 @@ async def nani(context):
 # add a new user to the game, instantiate his character, runs a tutorial for them
 @bot.command(name = "isekai", help = "Starts your traveler adventure in another world.")
 async def isekai(context):
-    commandline = decode(context)
-    username = commandline[USERNAME]
+    username = context.message.author.name
     mention = context.message.author.mention
     # add the username to the users list
     if await register(context, TRAVELER): # was registered
@@ -499,36 +622,36 @@ async def isekai(context):
         grants = [
             item("Leather Garb", ALL_ITYPES[EQPT],
                 "A simple sturdy garb made from durable leather. :coat:",
-                [0, 0, 5, 0, 0, 0], ["chest",]
+                [0, 0, 5, 0, 0, 0, 0, 0], ["chest",]
             ),
             item("Canvas Pants", ALL_ITYPES[EQPT],
                 "Light-weight pants favored by many for their low price. :jeans:",
-                [0, 0, 3, 0, 0, 1], ["legs",]
+                [0, 0, 3, 0, 0, 1, 0, 0], ["legs",]
             ),
             item("Sandals", ALL_ITYPES[EQPT],
                 "Easy to walk in but not the highest quality. :sandal:",
-                [0, 0, 1, 0, 0, 1], ["feet",]
+                [0, 0, 1, 0, 0, 1, 0, 0], ["feet",]
             )
         ]
         if avatar.getClass() == ALL_CLASSES[FIGT]: # if fighter grant a sword
             grants.append(
                 item("Short Sword", ALL_ITYPES[EQPT],
                     "A simple arm-long iron blade for beginners. :dagger:",
-                    [0, 6, 0, 0, 0, 0], ["rarm",]
+                    [0, 6, 0, 0, 0, 0, 0, 0], ["rarm",]
                 )
             )
         elif avatar.getClass() == ALL_CLASSES[MAGC]: # if magicaster grant a staff
             grants.append(
                 item("Rod", ALL_ITYPES[EQPT],
                     "Wooden staff that help beginner casters focus. :key2:",
-                    [0, 0, 0, 6, 0, 0], ["rarm"]
+                    [0, 0, 0, 6, 0, 0, 0, 0], ["rarm"]
                 )
             )
         else: # if survivalist grant a bow
             grants.append(
                 item("Long Bow", ALL_ITYPES[EQPT],
                     "Arm-long wooden bow with a wild vine for string. :archery:",
-                    [0, 5, 0, 0, 0, 2], ["rarm", "larm"]
+                    [0, 5, 0, 0, 0, 1, 0, 0], ["rarm", "larm"]
                 )
             )
         for grant in grants:
@@ -538,7 +661,7 @@ async def isekai(context):
         # grant out starting money
         avatar.cashIn(500)
         await narrate(context.message.channel,
-            "{} was granted `500 isekash`.".format(mention))
+            "{} was granted `500 i$`.".format(mention))
         # record the avatar
         if save(avatar): # true if it was successful
             await narrate(context.message.channel,
@@ -550,8 +673,7 @@ async def isekai(context):
 @bot.command(name = "profile", help = "Shows info of a traveler.")
 async def profile(context):
     '''Load the avatar associated with "username" and then show his informations.'''
-    commandline = decode(context)
-    username = commandline[USERNAME]
+    username = context.message.author.name
     avatar = load(username)
     if avatar != None:
         await narrate(context.message.channel, avatar.profile()) # display the profile
@@ -570,12 +692,13 @@ async def profile(context):
 # display inventory
 @bot.command(name = "bag", help = "Display your inventory.")
 async def inventory(context):
-    commandline = decode(context)
-    username = commandline[USERNAME]
+    username = context.message.author.name
+    mention = context.message.author.mention
     avatar = load(username)
     if avatar != None:
         await narrate(context.message.channel,
-            "".join([context.message.author.mention, "'s", ' ', avatar.inventory()]))
+            "{}'s {}\n{} has {}".format(mention, avatar.inventory(), mention,
+            avatar.money()))
     else:
         await narrate(context.message.channel, 
             ["Error while loading your data!",
@@ -585,10 +708,9 @@ async def inventory(context):
 
 # equip owned gear
 @bot.command(name = "equip", help = "Equip gear stored in your bag. Composite gear names must be written in quotes. e.g.: ..equip bow   ..equip \"blue jeans\"")
-async def equip(context, gearName: str):
+async def equip(context, gearName):
     '''Makes "username"'s avatar equip "gearName" if its in their inventory.'''
-    commandline = decode(context)
-    username = commandline[USERNAME]
+    username = context.message.author.name
     channel = context.message.channel
     mention = context.message.author.mention
     avatar = load(username)
@@ -607,11 +729,10 @@ async def equip(context, gearName: str):
     save(avatar)
 
 # unequip items
-@bot.command(name = "unequip", help = "Equip gear stored in your bag. Composite gear names must be written in quotes. e.g.: ..unequip bow   ..unequip \"blue jeans\"")
+@bot.command(name = "unequip", help = "Take off gear stored in your bag.\nComposite gear names must be written in quotes.e.g.:\n..unequip bow   ..unequip \"blue jeans\"")
 async def unequip(context, gearName: str):
     '''Makes "username"'s avatar equip "itemName" if its in their inventory.'''
-    commandline = decode(context)
-    username = commandline[USERNAME]
+    username = context.message.author.name
     channel = context.message.channel
     mention = context.message.author.mention
     avatar = load(username)
@@ -632,8 +753,7 @@ async def unequip(context, gearName: str):
 @bot.command(name = "itemInfo", help = "Shows trivia about an item in your inventory.")
 async def itemInfo(context, itemName):
     '''Shows the infos of "itemName" in inventory.'''
-    commandline = decode(context)
-    username = commandline[USERNAME]
+    username = context.message.author.name
     channel = context.message.channel
     mention = context.message.author.mention
     avatar = load(username)
@@ -655,8 +775,7 @@ async def itemInfo(context, itemName):
 @bot.command(name = "tutorial", help = "Takes the player through a journey on a beginner dungeon floor to tell them how exploration works.")
 async def tutorial(context):
     '''Takes player through a mock up exploration.'''
-    commandline = decode(context)
-    username = commandline[USERNAME]
+    username = context.message.author.name
     channel = context.message.channel
     mention = context.message.author.mention
     avatar = load(username)
@@ -952,94 +1071,579 @@ async def tutorial(context):
         await narrate(channel,
             "Alright, good luck on your explorations traveler {}! :grin::grin::grin:".format(mention)
         )
+# invite others to a party
+@bot.command(name = "invite", help = "Form a party with someone to explore together. Usage: ..invite <username>")
+async def invite(context, invited: discord.User):
+    '''Adds another player to your character'''
+    username = context.message.author.name
+    channel = context.message.channel
+    mention = context.message.author.mention
+    user = isUser(username)
+    if user != None:
+        if user["idle"] == "yes":
+            invUser = isUser(invited.name)
+            if invUser != None:
+                if len(user["party"]) < 4:
+                    if invUser["idle"] == "yes":
+                        valid = False
+                        accept = None
+                        while not valid:
+                            await narrate(channel,
+                                ["Will you join {}?".format(invited.mention),
+                                 "[`Yes` :thumbsup:] [`No` :thumbsdown:] >>>"])
+                            accept = await userReply(await bot.wait_for("message"),
+                                invited.name)
+                            valid = accept.lower() in ['y', "yes", 'n', "no"]
+                        if accept.lower() in ['y', "yes"]:
+                            if invited.id not in user["party"]:
+                                user["party"].append(invited.id)
+                                invUser["party"].append(context.message.author.id)
+                                invUser["idle"] = "no"
+                                updateUserData(user)
+                                updateUserData(invUser)
+                            await narrate(channel,
+                                "{} has joined {}'s party.".format(invited.mention,
+                                    mention))
+                        else:
+                            await narrate(channel,
+                                "{} refused the invitation.".format(invited.mention))
+                    else:
+                        await narrate(channel,
+                            ["{} is not free at the moment.".format(invited["username"]),
+                             "Try again later."])
+                else:
+                    await narrate(channel,
+                        "Your party is already full {}.".format(mention))
+            else:
+                await narrate(channel,
+                    ["You can only invite someone who is a traveler themselves.",
+                     "Invite them to play {}.".format(mention)])
+        else:
+            await narrate(channel,
+                "It seem you are busy at the moment {}".format(mention))
+    else:
+        await narrate(channel, ["You don't have access to that command.",
+            "Use `..isekai` to travel first."])
+
+# shows the party leader his party
+@bot.command(name = "party", help = "Display the avatars that are in your party.")
+async def party(context):
+    '''List all members of your party.'''
+    username = context.message.author.name
+    mention = context.message.author.mention
+    channel = context.message.channel
+    user = isUser(username)
+    if user != None:
+        if len(user["party"]) != 0:
+            party = "{}'s party:\n".format(mention)
+            i = 0
+            while i < len(user["party"]):
+                party += bot.get_user(user["party"][i]).mention
+                i += 1
+            await narrate(channel, "{}.".format(party))
+        else:
+            await narrate(channel,
+                "You don't have anyone in your party {}.".format(mention))
+    else:
+        await narrate(channel, ["You don't have access to that command.",
+            "Use `..isekai` to travel first."])
+
+# dispell your party
+@bot.command(name = "cancelParty", help = "Dispel your party and free every single member.")
+async def cancelParty(context):
+    '''Remove all party members.'''
+    username = context.message.author.name
+    mention = context.message.author.mention
+    channel = context.message.channel
+    user = isUser(username)
+    if user != None:
+        if len(user["party"]) != 0:
+            i = 0 # won't be incremented
+            while i < len(user["party"]):
+                invUser = isUser(bot.get_user(user["party"][i]).name)
+                invUser["idle"] = "yes"
+                invUser["party"] = []
+                updateUserData(invUser)
+                user["party"].remove(user["party"][i])
+            updateUserData(user)
+            await narrate(channel,
+                "You sent your party members away {}.".format(mention))
+        else:
+            await narrate(channel,
+                "You don't have anyone in your party {}.".format(mention))
+    else:
+        await narrate(channel, ["You don't have access to that command.",
+            "Use `..isekai` to travel first."])
+
+# explore a floor
+@bot.command(name = "explore", help = "Begin the exploration of a dungeon floor. You can only explore up to the floor after the last floor you completed.\nUse <..dungeon> to see what levels are available.\nE.g.: <..explore 1> to explore first floor.")
+async def explore(context, floorNum: int):
+    '''Takes the avatar on the exploration of "floorNum"'''
+    rnd.seed()
+    username = context.message.author.name
+    channel = context.message.channel
+    mention = context.message.author.mention
+    avatar = load(username)
+    if avatar != None:
+        if isUser(username)["idle"] == "yes": # you're free to go
+            # make sure youre not free anymore
+            user = isUser(username)
+            user["idle"] = "no"
+            user["exploring"] = "yes"
+            updateUserData(user)
+            # check current level explored
+            top = isUser(username)["dungeon top"]
+            if floorNum < 1 or floorNum > (top + 1) or floorNum > len(all_floors()):
+                if top == 0:
+                    await narrate(channel, ["Invalid floor selection!",
+                        "You can only explore the `1` st floor."])
+                else:
+                    await narrate(channel, ["Invalid floor selection!",
+                        "You can only explore from the `1` st floor. to the `{}` th floors."\
+                            .format(top + 1)])
+            else: # we got an existing available floor to the user.
+                # gets the dict describing floor
+                floor = floorConfig(floorNum)
+                sBlocks = list()
+                if floor["specials"] != None:
+                    sBlocks = [(special["block"] - 1) for special in floor["specials"]]
+                # make party
+                explorers = [deepcopy(avatar), ]
+                # add party members
+                for invUserId in user["party"]:
+                    invUser = isUser(bot.get_user(invUserId).name)
+                    invUser["exploring"] = "yes"
+                    updateUserData(invUser)
+                    explorers.append(deepcopy(load(bot.get_user(invUserId).name)))
+                partyName = mention
+                if len(explorers) > 1:
+                    partyName += "'s party"
+                # start the exploration
+                alive = True
+                giveUp = False
+                completed = False
+                await narrate(channel, "{} entered `{}` in the `{}`".format(partyName,
+                    floor["name"], floor["stratum"]))
+                # exploration loop
+                num_block = 0
+                while alive and not giveUp and num_block < floor["size"]:
+                    await narrate(channel, "`{}` Block `{:2d}`".format(floor["name"],
+                        num_block + 1))
+                    if num_block in sBlocks: # special events
+                        block = None
+                        i = 0
+                        found = False
+                        # search and find the event
+                        while not found and i < len(floor["specials"]):
+                            if (num_block + 1) == floor["specials"][i]["block"]:
+                                block = floor["specials"][i]
+                                found = True
+                            else:
+                                i += 1
+                        # act on event
+                        if block["event"] == "gathering":
+                            narration = None
+                            if block["type"] == "herbs":
+                                narration = (floor["narration"]["intros"],
+                                    floor["narration"]["herb point"],
+                                    floor["narration"]["continues"])
+                            elif block["type"] == "wood":
+                                narration = (floor["narration"]["intros"],
+                                    floor["narration"]["wood point"],
+                                    floor["narration"]["continues"])
+                            else: # minerals
+                                narration = (floor["narration"]["intros"],
+                                    floor["narration"]["mineral point"],
+                                    floor["narration"]["continues"])
+                            alive = await gatheringBlock(context, narration, explorers,
+                                block["items"], block["rates"], floor["monsters"],
+                                floor["monsters prob."], floor["swarm size"],
+                                floor["danger"])
+                        else:
+                            print("Other events will be added later")
+                    elif num_block == (floor["size"] - 1): # stairs
+                        if floor["boss"] == None: # no boss
+                            alive, completed = await stairsBlock(context,
+                                (floor["narration"]["intros"],
+                                 floor["narration"]["stairs"],
+                                 floor["narration"]["completion"]),
+                                explorers, floor["boss"])
+                        else: # boss fight or escape
+                            alive, completed = await stairsBlock(context,
+                                (floor["narration"]["intros"], floor["narration"]["boss room"],
+                                 floor["narration"]["completion"]),
+                                explorers, floor["boss"])
+                    else: # regular blocks
+                        if rnd.randint(0, 99) < floor["encounter rate"] + floor["danger"]:
+                            # monsters attack
+                            alive = await fightBlock(context,
+                                (floor["narration"]["intros"],
+                                 floor["narration"]["fight"],
+                                 floor["narration"]["continues"]),
+                                explorers, floor["monsters"], floor["monsters prob."],
+                                floor["swarm size"], floor["danger"]
+                            )
+                        else:
+                            await emptyBlock(context,
+                                (floor["narration"]["intros"],
+                                 floor["narration"]["empty"],
+                                 floor["narration"]["continues"]),
+                                explorers
+                            )
+                    if alive and not giveUp:
+                        num_block += 1
+                # end of exploration loop
+                if alive:
+                    if completed:
+                        await narrate(channel,
+                            "{} have completed their exploration of `{}` with success!"\
+                            .format(partyName, floor["name"]))
+                        # update their top floor
+                        current = int(floor["name"][-1])
+                        for avatar in explorers:
+                            user = isUser(avatar.getName())
+                            if user["dungeon top"] < current: # mark floor as completed
+                                user["dungeon top"] = current
+                                updateUserData(user)
+                    else: # not completed:
+                        await narrate(channel,
+                            "{} didn't complete their exploration of `{}` but they came back alive. Hooray~!"\
+                            .format(partyName, floor["name"]))
+                    # save
+                    for avatar in explorers:
+                        save(avatar)
+                else: # death
+                    await narrate(channel,
+                        "{} have fallen... They'll do better next time!"\
+                        .format(partyName, floor["name"]))
+                # free the user
+                user = isUser(username)
+                user["idle"] = "yes"
+                user["exploring"] = "no"
+                updateUserData(user)
+                explorers.remove(explorers[0]) # remove leader
+                for member in explorers:
+                    invUser = isUser(member.getName())
+                    invUser["exploring"] = "no"
+                    updateUserData(invUser)
+        else:
+            await narrate(channel,
+                "But you are already doing something else {}".format(mention))
+    else:
+        await narrate(channel, "Only travelers can explore the dungeon {}!".format(mention))
+
+# show available dungeon floors
+@bot.command(name = "dungeon", help = "See all available dungeon floors.")
+async def showFloors(context):
+    '''Displays a list of all levels available for the player to see.'''
+    username = context.message.author.name
+    channel = context.message.channel
+    mention = context.message.author.mention
+    avatar = load(username)
+    if avatar != None:
+        available = str()
+        dungeon = all_floors()
+        top = isUser(username)["dungeon top"] + 1 # have access to up to the next level to current explored
+        available += "`Dungeon:`\n"
+        i = 0
+        if top > len(dungeon):
+            top = len(dungeon) # in case they explored the whole dungeon 
+        while i < top:
+            floor = floorConfig(i + 1)
+            available += " - `{}` `{}`| Size: `{}` blocks| Danger Level: `{}`\n".\
+                format(floor["stratum"], floor["name"], floor["size"], floor["danger"])
+            i += 1
+        await narrate(channel, available)
+    else:
+        await narrate(channel, "You do not have authorization for that command.")
+
+# heal characters
+@bot.command(name = "inn", help = "Allows you to rest and recover hp.")
+async def rest(context):
+    '''Allows an avatar to rest and recover hp.'''
+    username = context.message.author.name
+    mention = context.message.author.mention
+    channel = context.message.channel
+    user = isUser(username)
+    if user != None:
+        if user["idle"] != "no": # you're free
+            avatar = load(username)
+            lostHP = avatar.getDictStats()["HP"]["max"] - avatar.getDictStats()["HP"]["cur"]
+            # intro message
+            await narrate(channel,
+                ["Welcome to `Sleepy Adventurer`, the best inn in the city!",
+                 "You can heal your hp when you rest here."]
+            )
+            if lostHP != 0:
+                cost = ceil(lostHP / 10) * 2 # 2i$ for 10 hp
+                await narrate(channel,
+                    "Sleep for the night and heal `{} HP`? Cost: `{} i$`.".format(\
+                        lostHP, cost))
+                # take user input
+                valid = False
+                choice = None
+                while not valid:
+                    await narrate(channel,
+                        "[`Rest` :sleeping_accommodation:] [`Leave` :walking:] >>> ")
+                    choice = await userReply(await bot.wait_for("message"), username)
+                    if type(choice) == str:
+                        valid = choice.lower() in ['r', "rest", 'l', "leave"] # valid action
+                # action
+                if choice.lower() in ['r', "rest"]:
+                    # take the money
+                    if type(avatar.getWallet().cashOut(cost)) == int: # can afford it
+                        # sleep
+                        user["idle"] = "no"
+                        user["resting"] = "yes"
+                        updateUserData(user)
+                        await narrate(channel,
+                            "{} barely hit the mattress that he fell in a deep sleep.".\
+                            format(mention))
+                        avatar.heal(lostHP)
+                        await narrate(channel,
+                            "{} woke up refreshed!".format(mention))
+                        user["idle"] = "yes"
+                        user["resting"] = "no"
+                        updateUserData(user)
+                        save(avatar)
+                    else: # can't afford it
+                        await narrate(channel,
+                            "You don't have enough for this!")
+                else: # leaving
+                    await narrate(channel,
+                        "{} decided to leave for the time being.".format(mention))
+            else: # HP is full
+                await narrate(channel,
+                    ["{}, you seem to be in great shape already.".format(mention),
+                     "Come back later."]
+                )
+        else: # you're busy
+            await narrate(channel,
+                "You can't rest at the inn if you're doing something else."
+            )
+    else:
+        await narrate(channel,
+            ["Only registered users can sleep {}".format(mention),
+             "Use `..isekai` to register as a traveler."]
+        )
 
 # turn bot off
 @bot.command(name = "disconnect", help = "Disconnect the bot. Only works if received from admin level user.")
 async def disconnect(context):
     '''Turns the bot offline. Requires access level "ADMIN".'''
-    commandline = decode(context)
-    username = commandline[USERNAME]
+    username = context.message.author.name
     user = isUser(username)
     if user != None: # the user exists
-        if user[ACCESS_LEVEL] == ADMIN: # only admin can do this
+        if user["access level"] == ADMIN: # only admin can do this
             archive() # save avatars
             await narrate(context.message.channel,
                 "Roger! Going offline... :grin::grin::grin:")
             exit()
+        else:
+            await narrate(context.message.channel, "You do not have authorization for that command.")
     else:
         await narrate(context.message.channel, "You do not have authorization for that command.")
 
 ##### EXPLORATION MECHANICS #####
 # empty block
-def emptyBlock(narration):
+async def emptyBlock(context, narration, party):
     '''Describes a block using intros, descriptions and continuation sentences provided.
     narration[0] are intros list
     narration[1] are descriptions list
     narration[2] are continues list'''
     rnd.seed()
+    channel = context.message.channel
     # add an intro
-    print(rnd.choice(narration[0]))
+    await narrate(channel,
+        rnd.choice(narration[0]).format(mentionParty(context, party)))
     # add a random number of descriptions
     sentIndexes = rnd.sample(range(len(narration[1])), rnd.randint(1, 3))
     for index in sentIndexes:
-        print(narration[1][index])
+        await narrate(channel,
+            narration[1][index].format(mentionParty(context, party)))
     # add continuation
-    print(rnd.choice(narration[2]))
-    # returns signal if exploration continues or not
-    return True
+    await narrate(channel, rnd.choice(narration[2]).format(mentionParty(context, party)))
 
 # fight block
-def fightBlock(narration, party, floorMonsters, monstersProb, maxMonsters, dangerLvl):
+async def fightBlock(context, narration, party, floorMonsters, monstersProb, maxMonsters,\
+    dangerLvl):
     '''Narrates the start of a fight and then does the fight. Then narrates the end of the fight.'''
     rnd.seed()
+    channel = context.message.channel
     # add an intro
-    print(rnd.choice(narration[0]))
+    await narrate(channel, rnd.choice(narration[0]).format(mentionParty(context,
+        party)))
     # add an description
-    print(rnd.choice(narration[1]))
+    await narrate(channel, rnd.choice(narration[1]).format(mentionParty(context, 
+        party)))
     # fight
-    if encounter(party, floorMonsters, monstersProb, maxMonsters, dangerLvl):
-        print(rnd.choice(narration[2]))
+    if await encounter(context, party, floorMonsters, monstersProb, maxMonsters,
+        dangerLvl):
+        await narrate(channel, rnd.choice(narration[2]).format(mentionParty(context,
+            party)))
         return True
     else:
         return False
 
 # gathering block
-def gatheringBlock(narration, party, itemList, itemChances,
-            floorMonsters, monstersProb, maxMonsters, dangerLvl):
+async def gatheringBlock(context, narration, party, itemList, itemChances,
+    floorMonsters, monstersProb, maxMonsters, dangerLvl):
     '''Describes a gathering block and give the option to the team to gather or leave.
     Includes a possibility of starting a fight.'''
+    channel = context.message.channel
+    username = context.message.author.name
+    survived = True
     # intro
-    print(rnd.choice(narration[0]))
+    await narrate(channel,
+        rnd.choice(narration[0]).format(mentionParty(context, party)))
     # point description
     for sentence in narration[1]:
-        print(sentence)
+        await narrate(channel, sentence.format(mentionParty(context, party)))
     # give choice gather or leave
-     # action choice
-    valid = False
     action = None
-    survived = True
-    while not valid:
-        action = input("Try gathering here? [Gather] [Leave] >>> ")
-        valid = action.lower() in ['g', "gather", 'l', "leave"] # valid action
-    if action in ['g', "gather"]:
+    gather = 0
+    leave = 0
+    for i, member in enumerate(party):
+        if i == 0: # leader
+            memberMention = context.message.author.mention
+        else: # get mention of other members
+            memberMention = bot.get_user(isUser(username)["party"][i-1]).mention
+        valid = False
+        while not valid:
+            await narrate(channel, "Try gathering here {}? [`Gather` :hand_splayed:]\
+            [`Leave` :man_running:] >>> ".format(memberMention))
+            action = await userReply(await bot.wait_for("message"), member.getName())
+            if action != None:
+                valid = action.lower() in ['g', "gather", 'l', "leave"] # valid action
+        if action in ['g', "gather"]:
+            gather += 1
+        else:
+            leave += 1
+    # execution
+    if gather > leave:
         success = ceil((1 - (.1 * dangerLvl)) * 100) # chances of getting an item
-        if rnd.randint(0, 100) > success: # monsters attacked
-            print("The party just decided to gather but suddenly monsters attacked!")
-            if encounter(party, floorMonsters, monstersProb, maxMonsters, dangerLvl): # we won
-                print("With the monsters out of the way they got back to gathering.")
+        if rnd.randint(0, 99) > success: # monsters attacked
+            await narrate(channel,
+                "{} just decided to gather but suddenly monsters attacked!"\
+                .format(mentionParty(context, party)))
+            if await encounter(context, party, floorMonsters, monstersProb, maxMonsters, dangerLvl): # we won
+                await narrate(channel,
+                    "With the monsters out of the way {} got back to gathering."\
+                    .format(mentionParty(context, party)))
             else:
                 survived = False
-        if survived: #randint(0, 100) <= success: # we gather
+        if survived:
             found = rnd.choices(itemList, weights = itemChances, k = 1)
             qty = rnd.randint(1, 3)
-            print("While herb picking, the party found `{} {}`!".format(qty, found[0]["name"]))
+            await narrate(channel, "While herb picking, {} found `{} {}`!"\
+                .format(mentionParty(context, party), qty, found[0]["name"]))
             for unit in party:
                 unit.receive(item(found[0]["name"], found[0]["type"], found[0]["description"],
                     found[0]["stats"], found[0]["reqs"]), qty)
     # we either left or went through a gathering
     if survived:
-        print(rnd.choice(narration[2]))
+        await narrate(channel, rnd.choice(narration[2]).format(mentionParty(context,
+            party)))
     return survived
+
+# stairs block
+async def stairsBlock(context, narration, party, boss = None):
+    channel = context.message.channel
+    username = context.message.author.name
+    completed = False
+    survived = True
+    # intro
+    await narrate(channel, rnd.choice(narration[0]).format(mentionParty(context, party)))
+    # description
+    for sentence in narration[1]:
+        await narrate(channel, sentence.format(mentionParty(context, party)))
+    if boss == None:
+        completed = True
+    if boss != None: # there is a boss monster
+        # fight or retreat
+        action = None
+        boss = 0
+        city = 0
+        for i, member in enumerate(party):
+            if i == 0: # leader
+                memberMention = context.message.author.mention
+            else: # get mention of other members
+                memberMention = bot.get_user(isUser(username)["party"][i-1]).mention
+            valid = False
+            while not valid:
+                await narrate(channel, 
+                    "Will you try to defeat the boss or teleport back to town {}?"\
+                    .format(memberMention),
+                    "[`Boss` :crossed_swords:] [`City` :homes:] >>> ")
+                action = await userReply(await bot.wait_for("message"), member.getName())
+                if action != None:
+                    valid = action.lower() in ['b', "boss", 'c', "city"] # valid action
+            if action.lower in ['b', "boss"]:
+                boss += 1
+            else:
+                city += 1
+        # depends on action
+        if city >= boss:
+            await narrate(channel,
+                "{} decide to not take the risk of facing the boss and head back."\
+                .format(mentionParty(context, party)))
+            completed = False
+        else:
+            i = 0
+            while survived and i < len(boss): # fight each form separately
+                currentForm = monsterParty([boss[i],])
+                if i == 0:
+                    await narrate(channel, "The boss approaches.")
+                elif i == (len(boss) - 1): # last form
+                    await narrate(channel,
+                        "Covered in the wounds you inflicted onto it, the boss\
+                        furiously faces {} for the last time.".format(\
+                        mentionParty(context, party)))
+                else:
+                    await narrate(channel,
+                        "The boss roars savagely and attacks {} once more!".format(\
+                        mentionParty(context, party)))
+                if autoFight(context, party, copy(currentForm)): # win
+                    i += 1
+                    # experience
+                    exp = 2 * ceil(expAwarding(party, currentForm, dangerLvl))
+                    await narrate(channel,
+                        "{} gained `{:3d} exp`. points.".format(\
+                        mentionParty(context, party), exp))
+                    for unit in party:
+                        if(unit.develUp(exp)): # a true will mean they leveled up
+                            await narrate(channel,
+                                "`{}` has reached `lvl {:3d}`!".format(unit.getName(),
+                                unit.getLvl()))
+                    # loot
+                    allLoot = list()
+                    for unit in currentForm:
+                        for drop in unit.getBag().availableInBag():
+                            allLoot.append(drop) # gather all possible loot
+                    dropped = rnd.sample(allLoot, rnd.randint(0, len(allLoot)))
+                    if len(dropped) > 0: # something was dropped
+                        for drop in dropped:
+                            await narrate(channel,
+                                "`{}` was dropped by the monsters.".format(drop.getName()))
+                            for unit in party:
+                                unit.receive(drop, 1)
+                else: # lost
+                    survived = False
+            # out of the fight loop
+            if survived:
+                await narrate(channel,
+                    "Finally, exhausted, {} falls down and stops moving, lifeless."\
+                    .format(boss[0].getName()))
+                completed = True
+            else:
+                await narrate(channel,
+                    "{} did their best but fell to the power of the boss...".format(\
+                    mentionParty(context, party)))
+    # finish the exploration
+    for sentence in narration[2]:
+        await narrate(channel, sentence.format(mentionParty(context, party)))
+    # return both survived and completed
+    return (survived, completed)
 
 ##### BATTLE MECHANICS #####
 # return a party's cumulated specific stat
@@ -1061,8 +1665,9 @@ def present(party):
     '''Present all the units in a party.'''
     pres = str()
     for unit in party:
-        pres += unit.pres()
-        pres += "   "
+        if unit.isAlive():
+            pres += unit.pres()
+            pres += "   "
     return pres
 
 # makes a party of monsters from a monster list
@@ -1078,9 +1683,10 @@ def monsterParty(monstersList, monstersProb = None, maxMonsters = 1, dangerLvl =
     while i < len(party):
         monster = isekaiMob(party[i]["name"], party[i]["class"], party[i]["level"],
             copy(party[i]["stats"])) # create the monster
-        for loot in party[i]["loot"]:
-            monster.receive(item(loot["name"], loot["type"], loot["description"],
-                loot["stats"], loot["reqs"]), 1) # give it it's loot
+        if party[i]["loot"] != None:
+            for loot in party[i]["loot"]:
+                monster.receive(item(loot["name"], loot["type"], loot["description"],
+                    loot["stats"], loot["reqs"]), 1) # give it it's loot
         party[i] = monster # replace the dict by the actual monster
         i += 1
     return party
@@ -1101,12 +1707,19 @@ def expAwarding(party, party2, dangerLvl):
 # computes the amount of damage a party can inflict to the other
 def atkRound(party, party2):
     '''Compute the damage that party2 will suffer from getting attacked by party.'''
+    # all of party attacking party2
     rawDMG = (cumulated(party, ATK) + cumulated(party, SPATK)) / len(party)
+    # all of party2 defending
     rawRES = (cumulated(party2, DEF) + cumulated(party2, SPDEF)) / len(party2)
     dmg = rawDMG - rawRES
     if dmg < 1:
         dmg = 1
-    return int(dmg)
+    # introducing normal and critical hits
+    hit = "normal"
+    if rnd.randint(0, 99) < (10 + cumulated(party, CRIT)): # critical
+        hit = "critical"
+        dmg *= 2 # double damage
+    return (hit, int(dmg))
 
 # average agility stat
 def averageAGI(party):
@@ -1123,9 +1736,23 @@ def escapeChances(party, party2, dangerLvl):
 
 # distribute total damage to party
 def distributeDMG(party, dmg):
-    for unit in party:
-        if unit.isAlive():
-            unit.sufferDamage(dmg)
+    dmgFeed = str()
+    unitDmg = ceil(dmg / len(party))
+    i = 0
+    while i < len(party):
+        # introducing "weak" damage
+        if party[i].isAlive():
+            if rnd.randint(0, 99) < (20 + party[i].getStats()[LUCK]): # weak hit
+                party[i].sufferDamage(ceil(unitDmg / 2))
+                dmgFeed += "`{}` resisted the hit and lost `{} HP`.\n".format(\
+                party[i].getName(), ceil(unitDmg / 2))
+            else:
+                party[i].sufferDamage(unitDmg)
+                dmgFeed += "`{}` lost `{} HP`.\n".format(party[i].getName(), unitDmg)
+            if not party[i].isAlive():  
+                dmgFeed += "`{}` has fallen.\n".format(party[i].getName())
+        i += 1
+    return dmgFeed
 
 # checks if the party is still alive
 def partyStatus(party):
@@ -1137,16 +1764,19 @@ def partyStatus(party):
     return alive > 0
 
 # makes a fight loop and determine the winner
-def autoFight(party, party2):
+async def autoFight(context, party, party2):
     '''Simulate a fight between "party" and "party2" their opponents.
     Return true if "party" won and false else.'''
+    channel = context.message.channel
     alive = True
     won = False
     turn = 0
     while alive and not won:
+        battlefeed = str()
         # battle state
-        print("`TURN {}`\n{}\n\nVS\n\n{}".format(turn + 1, present(party2), present(party)))
-        # turn
+        battlefeed += "`TURN {}`\n{}\n\nVS\n\n{}\n".format(turn + 1, present(party2),
+            present(party))
+        # for turn taking
         attackers = None
         defenders = None
         # speed test
@@ -1160,22 +1790,17 @@ def autoFight(party, party2):
         rounds = 0
         while rounds in range(2):
             if attackers == party:
-                print("The party attacked with all their might.")
+                battlefeed += "{} attacked:\n".format(mentionParty(context, party))
             else: # defenders == party2
-                print("The monsters attacked with all their might.")
-            avgDamage = ceil(atkRound(attackers, defenders) / len(defenders)) # compute damage
-            if defenders == party:
-                print("The party suffered {:3d} damage per units.".format(avgDamage))
-            else: # defenders == party2
-                print("The monsters took {:3d} damage per units.".format(avgDamage))
-            distributeDMG(defenders, avgDamage) # distribute damage
-            i = 0
-            while i < len(defenders):
-                if not defenders[i].isAlive():  
-                    print("{} has fallen.".format(defenders[i].getName()))
-                    defenders.remove(defenders[i])
+                if len(attackers) == 1:
+                    battlefeed += "`{}` attacked:.\n".format(attackers[0].getName())
                 else:
-                    i += 1
+                    battlefeed += "The monsters attacked:\n"
+            damage = atkRound(attackers, defenders)
+            if damage[0] == "critical":
+                battlefeed += "It's a critical hit!!!\n"
+            damage = damage[1] # strip string off            
+            battlefeed += distributeDMG(defenders, damage) # distribute damage
             # stop the fight in case defenders were defeated
             if partyStatus(defenders):
                 rounds += 1
@@ -1183,6 +1808,8 @@ def autoFight(party, party2):
                 rounds += 2 # break the loop
             # swap the positions
             attackers, defenders = defenders, attackers
+        # print the battle feed
+        await narrate(channel, battlefeed)
         # check status of each party
         turn += 1
         alive = partyStatus(party)
@@ -1194,67 +1821,118 @@ def autoFight(party, party2):
         return False
 
 # create fight conditions, do the fight, give exp and loot    
-def encounter(party, floorMonsters, monstersProb, maxMonsters, dangerLvl):
+async def encounter(context, party, floorMonsters, monstersProb, maxMonsters, dangerLvl):
+    channel = context.message.channel
+    username = context.message.author.name
     # init
     rnd.seed()
     survived = False
     # make monsters party
     party2 = monsterParty(floorMonsters, monstersProb, maxMonsters, dangerLvl)
     # show battle state
-    print("A battle has started:")
-    print("{}\n\nVS\n\n{}".format(present(party2), present(party)))
+    await narrate(channel, ["A battle has started:", 
+        "{}\n\nVS\n\n{}".format(present(party2), present(party))])
     esc = escapeChances(party, party2, dangerLvl)
-    dmg = int(atkRound(party, party2) / len(party2))
-    rDmg = int(atkRound(party2, party) / len(party))
-    print("Dmg. dealt: `{:3d}HP`| Dmg. rec.: `{:3d}HP`| Esc. prob. = `{:2d}%`".format(dmg, rDmg, esc)) 
-    # action choice
-    valid = False
-    while not valid:
-        action = input("What should the party do?\n[Fight][Run] >>> ")
-        valid = action.upper() in ["F", "FIGHT", "R", "RUN"] # valid action
-        if not valid:
-            print("Enter Fight, or F to fight; Run or R to run.")
+    dmg = atkRound(party, party2)
+    if dmg[0] == "critical":
+        dmg = (dmg[0], dmg[1] / 2) # prevent critical hit misinformation
+    dmg = ceil(dmg[1] / len(party2))
+    rDmg = atkRound(party2, party)
+    if rDmg[0] == "critical":
+        rDmg = (rDmg[0], rDmg[1] / 2)
+    rDmg = ceil(rDmg[1] / len(party))
+    await narrate(channel,
+        "Dmg. dealt: `{:3d}HP`| Dmg. rec.: `{:3d}HP`| Esc. prob. = `{:2d}%`".format(dmg,
+        rDmg, esc)) 
+    # action choice    
+    action = None
+    fight = 0
+    run = 0
+    for i, member in enumerate(party):
+        if i == 0: # leader
+            memberMention = context.message.author.mention
+        else: # get mention of other members
+            memberMention = bot.get_user(isUser(username)["party"][i-1]).mention
+        valid = False
+        while not valid:
+            await narrate(channel, "What will you do {}?\n[`Fight` :crossed_swords:] \
+            [`Run` :man_running:] >>> ".format(memberMention))
+            action = await userReply(await bot.wait_for("message"), member.getName())
+            if action != None:
+                valid = action.lower() in ['f', "fight", 'r', "run"] # valid action
+        if action.lower() in ['f', "fight"]:
+            fight += 1
+        else:
+            run += 1
     # execution
     completed = False
-    if action.upper() in ["R", "RUN"]: # run first cause in case it fails the battle still happens
-        if rnd.randint(0, 100) <= esc: # could get away 
-            print("The party ran so quickly that the monsters couldn't catch up.")
+    if run >= fight: # run first cause in case it fails the battle still happens
+        if rnd.randint(0, 99) <= esc: # could get away 
+            await narrate(channel,
+                "{} ran so quickly that the monsters couldn't catch up.".format(\
+                mentionParty(context, party)))
             completed = True
             survived = True
         else:
-            print("The party bolted but the monsters stopped them in their track.")
+            await narrate(channel,
+                "{} bolted but the monsters stopped them in their track.".format(\
+                mentionParty(context, party)))
     if not completed: # team didn't try to or didn't manage to escape
         # recompute probabilities
-        if autoFight(party, copy(party2)): # win
+        if await autoFight(context, party, copy(party2)): # win
             survived = True
-            print("The battle has ended.")
+            await narrate(channel, "The battle has ended.")
             # experience
             exp = ceil(expAwarding(party, party2, dangerLvl))
-            if len(party) > 1:
-                print("Each party member gained `{:3d} exp`. points.".format(exp))
-            else:
-                print("{} gained `{:3d} exp`. points.".format(party[0].getName(), exp))
+            await narrate(channel,
+                "{} gained `{:3d} exp`. points.".format(mentionParty(context, party), exp))
             for unit in party:
                 if(unit.develUp(exp)): # a true will mean they leveled up
-                    print("`{}` has reached `lvl {:3d}`!".format(unit.getName(), unit.getLvl()))
+                    await narrate(channel,
+                        "`{}` has reached `lvl {:3d}`!".format(unit.getName(),
+                        unit.getLvl()))
             # loot
-            allLoot = list()
-            for unit in party2:
-                for drop in unit.getBag().availableInBag():
-                    allLoot.append(drop) # gather all possible loot
-            dropped = rnd.sample(allLoot, rnd.randint(0, len(allLoot)))
-            if len(dropped) > 0: # something was dropped
-                for drop in dropped:
-                    print("`{}` was dropped by the monsters.".format(drop.getName()))
-                    for unit in party:
-                        unit.receive(drop, 1)
+            for monster in party2:
+                for i, drop in enumerate(monster.getBag().availableInBag()):
+                    # 80% of chance of dropping the 1st item
+                    # 70% of dropping 2nd etc...
+                    if rnd.randint(0, 99) < (80 - i * 10):
+                        await narrate(channel,
+                            "{} collected `{}` from the {}'s carcass.".format(\
+                            mentionParty(context, party), drop.getName(), 
+                                monster.getName())
+                        )
+                        for unit in party:
+                            unit.receive(drop, 1)
         else: # lost
             survived = False
     return survived
 
 ##### HELPER FUNCTIONS #####
+# return a string to identify a party.
+def mentionParty(context, party):
+    '''"party" is a list of isekai mobs.'''
+    mention = context.message.author.mention
+    if len(party) > 1:
+        mention += "'s party"
+    return mention
+
+# count how many floors are in the dungeon
+def all_floors():
+    '''Return the config files for all dungeon floor'''
+    allFloors = [f for f in os.listdir(DUNGEON_PATH) if isfile(join(DUNGEON_PATH, f))]
+    return allFloors
+    
+# import dungeon config from file
+def floorConfig(num: int):
+    '''Open a floor file and returns the contents.'''
+    config = None
+    with open(str().join([DUNGEON_PATH, '/', str(num), ".json"]), 'r') as ioData:
+        config = json.load(ioData)
+    return config["floor"]
+    
 # log errors
-async def eReport(report):
+def eReport(report):
     ''' uses the logging module to quickly save the report in a file'''
     
     logging.basicConfig(filename = REPORT_FILE,
@@ -1269,17 +1947,6 @@ async def eReport(report):
     
     # log the report
     logger.info(report)
-
-# get information out of context for functions operations
-def decode(discordCtx):
-    '''Analyses "discordCtx" returns command and parameters.'''
-    parts = [discordCtx.message.author.name,] # list the username
-    argument = str()
-    if len(discordCtx.args) != 0: # there are arguments passed
-        for arg in discordCtx.args:
-            argument += str(arg)
-        parts.append(argument)
-    return parts
 
 # check of user exists
 def isUser(tag):
@@ -1299,7 +1966,7 @@ def isUser(tag):
             i += 1        
     # return statements
     if found:
-        return (database[i]["username"], database[i]["level"])
+        return (database[i])
     else:
         return None
 
@@ -1308,6 +1975,22 @@ def areSame(string, string2):
     '''Compare two strings by lower casing both and checking character by character.
     Return True if they're similar, False elesewise.'''
     return string.lower() == string2.lower()
+
+def updateUserData(newData: dict):
+    '''Changes the contents of the "users.json" file.'''
+    # load current content
+    userlist = None
+    with open(USERS_LIST, 'r') as jsonData:
+        userlist = json.load(jsonData)["users"]
+        for user in userlist:
+            if user["username"] == newData["username"]:
+                # update
+                for key in user:
+                    user[key] = newData[key]
+        # save file
+    # turn it into a dict
+    with open(USERS_LIST, 'w') as jsonData:
+        json.dump({"users": userlist}, jsonData, indent = 4)
 
 # record the infos of players as persistent files
 def archive():
