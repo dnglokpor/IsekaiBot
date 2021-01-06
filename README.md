@@ -9,7 +9,9 @@ The whole bot runs from *IsekaiBot.py*. *encounters.py* was more of a testing gr
 - follow the instructions on how to get a token at: https://www.writebots.com/discord-bot-token/
 - once you have your token, create a *.env* file (no name needed just the extension) in the same folder where the *IsekaiBot.py* file is located.
 - open the *.env* and type: **DISCORD_TOKEN =** and paste your token after the equal sign.
-With all those done, you will now be ready to run the bot from a terminal. It is preferable to run it with console printing synchronized to help with debug:
+
+With all those done, you will now be ready to run the bot from a terminal.
+It is preferable to run it with console printing synchronized to help with debug:
 
 **python -u IsekaiBot.py**
 
