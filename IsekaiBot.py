@@ -68,7 +68,7 @@ MAGC = 2
 SRVL = 3
 ALL_CLASSES = ["monster", "fighter", "magicaster", "survivalist"]
 ALL_DESCRIPTIONS = ["Cunning creatures that live in the dungeons.",
-    "Those who have answered the call of arms and use them to async defeat their opponents.",
+    "Those who have answered the call of arms and use them to defeat their opponents.",
     "Their sense of magic allow them to make one with it and conjure forth spells for good or evil.",
     "One who has made the wilderness their home and require no help to survive its dangers."
 ]
@@ -855,9 +855,16 @@ async def tutorial(context):
             battleState = str()
             battleState += "\n\nA battle has started:"
             battleState += "\n{}\n\nVS\n\n{}".format(present(monster), present(party))
-            win = winChances(party, monster, 1)
             esc = escapeChances(party, monster, 1)
-            battleState += "\nOdds: Winning prob. = {:.2f}%| Escape prob. = {:.2f}%".format(win, esc)
+            dmg = atkRound(party, monster)
+            if dmg[0] == "critical":
+                dmg = (dmg[0], dmg[1] / 2) # prevent critical hit misinformation
+            dmg = ceil(dmg[1] / len(monster))
+            rDmg = atkRound(monster, party)
+            if rDmg[0] == "critical":
+                rDmg = (rDmg[0], rDmg[1] / 2)
+            rDmg = ceil(rDmg[1] / len(party))
+            battleState += "\nDmg. dealt: `{:3d}HP`| Dmg. rec.: `{:3d}HP`| Esc. prob. = `{:2d}%`".format(dmg,rDmg, esc)
             await narrate(channel, battleState)
             await narrate(channel,
                 ["`TUTORIAL`",
