@@ -1,0 +1,11 @@
+ .env
+Dungeon/*
+Exploration.py
+__pycache__/*
+build/*
+cartridges/*
+dist/*
+errorLog.txt
+itemizer.spec
+myLewysG_RPG.py
+users.json
