@@ -1,0 +1,117 @@
+{
+	"floor": {
+		"name": "Floor 1",
+		"stratum": "Verdant Green Stratum",
+		"size": 15,
+		"danger": 1,
+		"monsters": [
+			{
+				"name": "Green Slime",
+				"class": "monster",
+				"level": 1,
+				"stats": [15, 10, 7, 8, 6, 7, 1, 1],
+				"loot": [
+					{
+						"name": "Green Core Fragments",
+						"type": "n_consumable",
+						"description": "Fragments of a Green Slime core. Can be sold for a cheap price.",
+						"stats": null,
+						"reqs": null
+					}
+				]
+			},
+			{
+				"name": "Punny Bunny",
+				"class": "monster",
+				"level": 1,
+				"stats": [18, 13, 7, 9, 6, 11, 1, 1],
+				"loot": [
+					{
+						"name": "Rabbit Pelt",
+						"type": "n_consumable",
+						"description": "\"Neige\" coloured pelt of a freshly skinned Punny Bunny. Fetches a cheap price at the local smith.",
+						"stats": null,
+						"reqs": null
+					}
+				]
+			}
+		],
+		"monsters prob.": [60, 40],
+		"encounter rate": 60,
+		"swarm size": 5,
+		"boss": null,
+		"specials": [
+			{
+				"block": 9,
+				"event": "gathering",
+				"type": "herbs",
+				"items": [
+					{
+						"name": "Bittherb",
+						"type": "n_consumable",
+						"description": "They say it is most bitter herb in the world. Good for making remedies.",
+						"stats": null,
+						"reqs": null
+					},
+					{
+						"name": "Moonflower",
+						"type": "n_consumable",
+						"description": "A flower that grows towards the moon. Often found in forests under tall trees.",
+						"stats": null,
+						"reqs": null
+					},
+					{
+						"name": "Blade Grass",
+						"type": "n_consumable",
+						"description": "Beware cuts. Smiths believe that using it in their fire make their weapons sharper.",
+						"stats": null,
+						"reqs": null
+					}
+				],
+				"rates": [60, 15, 25]
+			}
+		],
+		"narration": {
+			"intros": [
+				"As {} walked through the vast greenery, they spotted a wide open clearing.",
+				"As {} explored the green forest, they saw a cluster of tall bushes.",
+				"Walking through a patch of tall grass, {} came across a group of tall trees."
+			],
+			"continues": [
+				"{} decided to move on.",
+				"There was nothing more to do there so {} kept on going.",
+				"{} caught their breath for a minute, then decided to continue their exploration."
+			],
+			"empty": [
+				"A carpet of pretty flowers laid there in their sight and their scent filled the air.",
+				"The ground was covered in a thick layer of green grass, sparse with moss covered rocks or branches.",
+				"The foliage of the trees blocked most of the sunlight but not as much of the heat.",
+				"{} stopped to listen to the noises of nature: birdsongs by the dungeon unique birds.",
+				"A bunch of rocks of different sizes could be seen here and there, and covered in green moss.",
+				"A small stream could be seen meandering at the base of what seemed to be a small hill.",
+				"There was a huge log in the middle of the clearing, covered in strange mushrooms.",
+				"A small breeze rose and blew a bunch of dead leaves all around you but quickly faded away."
+			],
+			"fight": [
+				"Suddenly, they felt a hostile presence and sure enough {} encountered monsters.",
+				"Out of nowhere a group of monsters jumped upon the unsuspecting {}.",
+				"{} just had the chance to take their weapons that they were face to face with monsters."
+			],
+			"stairs": [
+				"They see a weird light pillar a little bit forward and steadily walk toward it.",
+				"Upon realizing it is the teleporter that leads back to the city, they happily run to it."
+			],
+			"boss room": null,
+			"herb point": [
+				"{} saw that the whole place was covered in various and diverse herbs.",
+				"Certainly gathering herbs here could lead to some results."
+			],
+			"wood point": null,
+			"mineral point": null,
+			"completion": [
+				"It is the end of your exploration {}.",
+				"You are magically transported back to the city."
+			]
+		}
+	}
+}
