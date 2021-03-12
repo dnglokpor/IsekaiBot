@@ -1,5 +1,4 @@
- .env
-Dungeon/*
+.env
 Exploration.py
 __pycache__/*
 build/*
