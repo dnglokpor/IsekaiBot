@@ -15,5 +15,7 @@ It is preferable to run it with console printing synchronized to help with debug
 
 **python -u IsekaiBot.py**
 
+A video showing what it looks like when ran is provided in the repository (**TestRun.mp4**.
+
 This code is totally open source so feel free to modify the cloned repository as much as you want. :)
 dnglokpor
